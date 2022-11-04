@@ -9,3 +9,5 @@ The report tried to explore quantitatively from the perspective of policy necess
  * whether single-family dwellings should be included in the policy.
 ## [Hazard Analysis](https://j-i-n-p-u.github.io/Sustainable-Urban-System/Hazard_Analysis.html) 
 For a given discrete hazard event, whether it happened in the past or is predicted to happen in the future,  we could geospatially visualize the boundary of the hazard. The vulnerability of each point in the boundary can be quantified based on its physical meaning. The project developed a hazard risk analysis to estimate the vehicle damages caused by flooding in Menlo Park City. 
+![Hazard_Analysis](Cover Images/Hazard_Analysis.png)
+
