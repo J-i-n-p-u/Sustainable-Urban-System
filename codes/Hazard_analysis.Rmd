@@ -1,0 +1,206 @@
+---
+title: "assignment3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+# acs_vars_2019_5yr <-
+#   listCensusMetadata(
+#     name = "2019/acs/acs5",
+#     type = "variables"
+#   )
+```
+```{r}
+library(tidyverse)
+library(sf)
+library(leaflet)
+```
+
+```{r pressure, echo=FALSE, fig.cap="PERCENT DAMAGE TO VEHICLES", out.width = '40%'}
+knitr::include_graphics("vulnerability.png")
+```
+
+
+```{r,eval=F}
+osm_bldg <- st_read("/Users/heyaojinghuang/Documents/GitHub/CEE 218Y/gis_osm_buildings_a_free_1.shp")
+```
+
+```{r,eval=FALSE}
+smc_cbg <- 
+  block_groups("CA","San Mateo", cb = F, progress_bar = F, year = 2019) 
+
+mlp_boundary <- places("CA", progress_bar = F) %>% 
+  filter(NAME == "Menlo Park")
+
+mlp_cbg <- smc_cbg %>% 
+  st_centroid() %>% 
+  .[mlp_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(smc_cbg %>% select(GEOID)) %>% 
+  st_as_sf()
+
+mlp_cbg<-
+  mlp_cbg%>% 
+  st_transform(4326)
+
+bldg_osm <-
+  osm_bldg[mlp_cbg, ]
+
+saveRDS(mlp_cbg,"mlp_cbg.rds")
+saveRDS(bldg_osm,"bldg_osm.rds")
+```
+
+```{r,eval=F}
+mlp_cbg<-readRDS("mlp_cbg.rds")
+mapview(mlp_cbg)
+```
+
+```{r,eval=F}
+bldg_osm<-readRDS("/Users/heyaojinghuang/Documents/GitHub/CEE 218Y/bldg_osm.rds")
+bldg_osm <-
+  bldg_osm%>%
+   .[mlp_cbg,]
+```
+
+```{r,eval=FALSE}
+smc_blocks <- 
+  blocks("CA","San Mateo", progress_bar = F, year = 2020) 
+
+mlp_blocks <- smc_blocks %>% 
+  st_centroid() %>% 
+  .[mlp_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(smc_blocks %>% select(GEOID20)) %>% 
+  st_as_sf()
+
+mlp_blocks<-
+  mlp_blocks%>% 
+  st_transform(4326)
+
+saveRDS(mlp_blocks,"mlp_blocks.rds")
+```
+```{r,eval=F}
+mlp_blocks <-readRDS("mlp_blocks.rds")
+mlp_blocks <-
+  mlp_blocks%>%
+  st_transform(4326) %>% 
+  .[bldg_osm,]
+```
+
+```{r,eval=F}
+mlp_blocks_pop <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:081",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    GEOID20 = paste0(state,county,tract,block),
+    pop = P1_001N
+  ) %>% 
+  filter(GEOID20 %in% mlp_blocks$GEOID20)
+
+```
+
+```{r,eval=F}
+mlp_bg_vehicle <-
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "block group:*",
+    regionin = "state:06+county:081",
+    vars = "group(B25044)"
+  ) %>% 
+  mutate(
+    cbg =
+      paste0(state,county,tract,block_group)
+  ) %>% 
+  dplyr::select(!c(GEO_ID,state,county,tract,block_group,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      dplyr::select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  dplyr::select(-variable) %>% 
+  separate(
+    label,
+    into = c(NA,NA,"tenure","vehicles"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(vehicles)) %>% 
+  filter(cbg %in% mlp_cbg$GEOID)
+
+
+```
+
+```{r,eval=F}
+mlp_bg_vehicle_total <- mlp_bg_vehicle %>% 
+  filter(vehicles != "No vehicle available") %>% 
+  mutate(
+    vehicles = substr(vehicles,1,1) %>% as.numeric(),
+    vehicle_count = vehicles * estimate
+  ) %>% 
+  group_by(cbg) %>% 
+  summarize(vehicle_count = sum(vehicle_count))
+
+```
+
+```{r,eval=F}
+mlp_block_veh_per_bldg <-
+  bldg_osm %>% 
+  filter(is.na(type)) %>% # any non-residential buildings?
+  select(osm_id) %>% # unique ID for each building
+  st_centroid() %>% 
+  st_join(mlp_blocks %>% select(GEOID20)) %>% # block shapes
+  st_join(mlp_cbg  %>% select(cbg = GEOID)) %>% # cbg shapes
+  st_drop_geometry() %>% 
+  group_by(GEOID20, cbg)%>% 
+  summarize(bldg_count = length(unique(osm_id))) %>% # how to get counts?
+  left_join(mlp_blocks_pop) %>% # census dataset
+  left_join(mlp_bg_vehicle_total) %>% # census dataset
+  group_by(cbg) %>% # "and vehicles are distributed evenly across population"
+  mutate(
+    veh_per_person = vehicle_count/sum(pop),
+    ppl_per_bldg = pop/bldg_count,
+    veh_per_bldg = veh_per_person*ppl_per_bldg # fractional result ok
+  )
+
+```
+```{r,eval=F}
+mlp_veh_per_bldg <- bldg_osm %>% 
+  filter(is.na(type)) %>% 
+  select(osm_id) %>% 
+  st_centroid() %>% 
+  st_join(mlp_blocks %>% select(GEOID20)) %>% 
+  left_join(mlp_block_veh_per_bldg) %>% select(veh_per_bldg, osm_id)
+saveRDS(mlp_veh_per_bldg,"mlp_veh_per_bldg.rds")
+```
+```{r,eval=F}
+mlp_veh_per_bldg <- readRDS("mlp_veh_per_bldg.rds")
+```
+
