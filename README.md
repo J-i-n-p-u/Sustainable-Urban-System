@@ -15,9 +15,11 @@ The report tried to explore quantitatively from the perspective of policy necess
 <br />
 For a given discrete hazard event, whether it happened in the past or is predicted to happen in the future,  we could geospatially visualize the boundary of the hazard. The vulnerability of each point in the boundary can be quantified based on its physical meaning. The project developed a hazard risk analysis to estimate the vehicle damages caused by flooding in Menlo Park City. 
 
-<br />
+
+
 ## [Amenity Accessibility for Communities](https://j-i-n-p-u.github.io/Sustainable-Urban-System/HTML/Complete_Community.html)
 <img align="left" height="150" src="Cover%20Images/complete_scores.png">
+
 We evaluated the accessibility of critical amenities for each block in Menlo Park City by introducing "isochrones," which are bands of equal distance (or duration) travel. In our report, "isochrones," contain 5-minute, 10-minute, and 15-minute walking, driving, and public transit distance from the center of each block. "Complete Score" is imported to quantify the accessibility, with which we can analyze whether an area has convenient amenities. Also, for urban planners, our work can be a reference to determine where the next amenity should be built.
 
 
