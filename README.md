@@ -24,8 +24,6 @@ The report tried to explore quantitatively from the perspective of policy necess
 
 <p align="justify"> We evaluated the accessibility of critical amenities for each block in Menlo Park City by introducing "isochrones," which are bands of equal distance (or duration) travel. In our report, "isochrones," contain 5-minute, 10-minute, and 15-minute walking, driving, and public transit distance from the center of each block. "Complete Score" is imported to quantify the accessibility, with which we can analyze whether an area has convenient amenities. Also, for urban planners, our work can be a reference to determine where the next amenity should be built.</p>
 
-&nbsp;
-
 ## [Assessment of the Equity Implications of Air Quality](https://j-i-n-p-u.github.io/Sustainable-Urban-System/HTML/Assessment%20of%20the%20Equity%20Implications%20of%20Air%20Quality%20in%20San%20Mateo%20County.html)
 <img align="right" height="170" src="Cover%20Images/air.png">
 
