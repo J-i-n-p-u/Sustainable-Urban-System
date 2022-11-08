@@ -32,7 +32,8 @@ The report tried to explore quantitatively from the perspective of policy necess
 ## [Analyze Emission based on Routing Data](https://j-i-n-p-u.github.io/Sustainable-Urban-System/HTML/Analyze%20Emission%20based%20on%20Routing%20Data.html)
 <img align="right" height="170" src="Cover%20Images/ghg.png">
 
-<p align="justify">  The report develops an assessment of the equity implications of air quality (via PurpleAir) in San Mateo County. The report takes two cities (Menlo Park and Redwood City) as examples and analyzes their geographic equity by mapping the Air Quality Index(AQI) of each block group and plotting the average PM 2.5 in February. The population equity is conducted by comparing the PM 2.5 distribution across different income groups and different racial groups. Finally, in data equity part, the report gives some suggestions to the suppliers of PM 2.5 probes by proposing two sets of metrics for selecting which block groups have greater demand to PM 2.5 probes. </p>
+<p align="justify">  The report analyzes Greenhouse Gas (GHG) emissions in Redwood City. Vehicle emissions and building emissions are considered as main GHG contributors. We compute the commute emissions based on block group (cbg) granularity to get higher accuracy. LODES 2013 to 2019 data are used to calculate commute emissions for the city as both an origin and destination. Residential and commercial electricity and gas usage from 2013 to 2019  data (PG&E) at the ZIP code level is used to estimate the building GHG emissions. We also analyze the effect of EV adoption on GHG emissions with an exponential decay model.
+ </p>
 
 
 
