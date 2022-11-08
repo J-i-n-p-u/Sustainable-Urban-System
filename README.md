@@ -5,11 +5,11 @@ The Sustainable Urban Systems emphasis merges traditional data analytics with co
 <img align="right" height="200" src="cover%20images/Land_use.png">
 
 
-<p align="justify"> 
-  An [Opportunity to Purchase Act](https://www.cityofepa.org/housing/page/east-palo-alto-opportunity-purchase-act-epa-opa) ("OPA") policy gives tenants, qualified nonprofits, or jurisdictions the first opportunity to purchase a residential property or assign their right to purchase to another entity when the owner is ready to sell. The City of East Palo Alto (EPA) has been considering an OPA policy, which has aroused heated discussion among stakeholders. 
-The report tried to explore quantitatively from the perspective of policy necessity. More specifically, two questions will be answered: 
+
+  An [Opportunity to Purchase Act](https://www.cityofepa.org/housing/page/east-palo-alto-opportunity-purchase-act-epa-opa) ("OPA") policy gives tenants, <p align="justify"> qualified nonprofits, or jurisdictions the first opportunity to purchase a residential property or assign their right to purchase to another entity when the owner is ready to sell. The City of East Palo Alto (EPA) has been considering an OPA policy, which has aroused heated discussion among stakeholders. 
+The report tried to explore quantitatively from the perspective of policy necessity. More specifically, two questions will be answered</p>: 
  * whether the housing burden is a relatively severe challenge for most residuals in EPA and 
- * whether single-family dwellings should be included in the policy.</p>
+ * whether single-family dwellings should be included in the policy.
 
 ## [Hazard Analysis](https://j-i-n-p-u.github.io/Sustainable-Urban-System/HTML/Hazard_Analysis.html) 
 <img align="left" height="150" src="Cover%20Images/Hazard_Analysis.png">
