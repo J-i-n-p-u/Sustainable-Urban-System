@@ -31,7 +31,7 @@ We evaluated the accessibility of critical amenities for each block in Menlo Par
 ## [Assessment of the Equity Implications of Air Quality](https://j-i-n-p-u.github.io/Sustainable-Urban-System/HTML/Assessment%20of%20the%20Equity%20Implications%20of%20Air%20Quality%20in%20San%20Mateo%20County.html)
 <img align="right" height="150" src="Cover%20Images/air.png">
 
-<div style="text-align: justify"> The report develops an assessment of the equity implications of air quality (via PurpleAir) in San Mateo County. The report takes two cities (Menlo Park and Redwood City) as examples and analyzes their geographic equity by mapping the Air Quality Index(AQI) of each block group and plotting the average PM 2.5 in February. The population equity is conducted by comparing the PM 2.5 distribution across different income groups and different racial groups. Finally, in data equity part, the report gives some suggestions to the suppliers of PM 2.5 probes by proposing two sets of metrics for selecting which block groups have greater demand to PM 2.5 probes. </div>
+<p align="justify">  The report develops an assessment of the equity implications of air quality (via PurpleAir) in San Mateo County. The report takes two cities (Menlo Park and Redwood City) as examples and analyzes their geographic equity by mapping the Air Quality Index(AQI) of each block group and plotting the average PM 2.5 in February. The population equity is conducted by comparing the PM 2.5 distribution across different income groups and different racial groups. Finally, in data equity part, the report gives some suggestions to the suppliers of PM 2.5 probes by proposing two sets of metrics for selecting which block groups have greater demand to PM 2.5 probes. </p>
 
 
 
