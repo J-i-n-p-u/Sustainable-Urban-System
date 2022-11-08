@@ -1,0 +1,72 @@
+---
+title: "dashboard_PM25_Equity"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(tigris)
+library(tidyverse)
+library(stars)
+library(plotly)
+library(flexdashboard)
+library(shiny)
+
+census_race_categories <- c(
+    "American Indian and Alaska Native alone",
+    "Asian alone",
+    "Black or African American alone",
+    "Native Hawaiian and Other Pacific Islander alone",
+    "Some Other Race alone",
+    "Two or more races",
+    "White alone")
+
+census_income_categories <-
+  c(
+    "Less than $24,999",
+    "$25,000-44,999",
+    "$45,000-99,999",
+    "$100,000 or more"
+  )
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput(
+  inputId = "factor", 
+  label = "factor: ",
+  choices = c("race","incomes"), 
+  selected = "race"
+)
+```
+
+Column
+-------------------------------------
+
+### PM2.5 Equity Analysis
+```{r}
+plotlyOutput("plot")
+```
+
+
+```{r, context = "server"}
+observeEvent(input$factor, {
+
+   file_name <- paste0("smc_pm25_",input$factor,"_fill.rds")
+   
+   smc_pm25_factor_stacked <-readRDS(file_name)
+     
+  output$plot <- renderPlotly({
+    smc_pm25_factor_stacked %>%
+      ggplotly() %>% 
+      config(displayModeBar = F)
+  })
+
+})
+```
+
+

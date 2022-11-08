@@ -1,0 +1,82 @@
+---
+title: "dashboard_data_equity"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(sf)
+library(leaflet)
+library(tigris)
+library(tidyverse)
+library(stars)
+library(flexdashboard)
+library(shiny)
+
+smc_cbg_scores_income<-readRDS("smc_cbg_scores_income_perc.rds")
+smc_cbg_scores_race<-readRDS("smc_cbg_scores_race_perc.rds")
+smc_cbg_scores_area<-readRDS("smc_cbg_scores_area_perc.rds")
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput(
+  inputId = "factor", 
+  label = "Factors: ",
+  choices = c("scores_area","scores_income","scores_race"), 
+  selected = "score_area"
+)
+```
+
+Column
+-------------------------------------
+
+### Data Equity Score, based on percentage
+
+```{r}
+leafletOutput("map")
+```
+
+```{r, context = "server"}
+observeEvent(input$factor, {
+
+  
+      factor<-input$factor
+
+      data_table <-readRDS(paste0("smc_cbg_",factor,"_perc.rds"))
+        
+      res_pal <- colorNumeric(
+        palette = "Reds",
+        domain = 
+          data_table$score
+      )
+
+      output$map <- renderLeaflet({
+        leaflet() %>% 
+        addTiles() %>% 
+        addPolygons(
+          data = data_table,
+          fillColor = ~res_pal(data_table$score),
+          color = "white",
+          opacity = 0.5,
+          fillOpacity = 0.5,
+          weight = 1,
+          label = ~paste0(
+            GEOID,input$factor,":",data_table$score
+          )
+        ) %>% 
+        addLegend(
+          data = data_table,
+          pal = res_pal,
+          values = ~as.numeric(data_table$score),
+          title = input$factor
+        )
+      })
+})
+```
+
+

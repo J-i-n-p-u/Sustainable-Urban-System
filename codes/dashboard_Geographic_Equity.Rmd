@@ -1,0 +1,140 @@
+---
+title: "dashboard_PM25_SMC"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(sf)
+library(leaflet)
+library(tigris)
+library(tidyverse)
+library(stars)
+library(plotly)
+library(mapview)
+library(flexdashboard)
+library(shiny)
+
+mlp_pm25_voronoi_month<-readRDS("mlp_pm25_voronoi_month.rds")
+mlp_pm25<-readRDS("mlp_pm25.rds")
+mlp_sensors<-readRDS("mlp_sensors.rds")
+
+rwc_pm25_voronoi_month<-readRDS("rwc_pm25_voronoi_month.rds")
+rwc_pm25<-readRDS("rwc_pm25.rds")
+rwc_sensors<-readRDS("rwc_sensors.rds")
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput(
+  inputId = "place", 
+  label = "Place: ",
+  choices = c("mlp","rwc"), 
+  selected = "mlp"
+)
+```
+
+Column
+-------------------------------------
+
+### PM2.5 distribution
+```{r}
+leafletOutput("map")
+```
+
+```{r, context = "server"}
+observeEvent({input$place}, {
+  
+        place<-input$place
+        
+        place_pm25 <- readRDS(paste0(place,"_pm25.rds"))%>%filter(!is.na(PM25))%>%
+          mutate(PM25=as.numeric(PM25))%>%
+          mutate(GEOID = as.numeric(GEOID))%>%
+          st_as_sf()
+        
+        place_sensors <- readRDS(paste0(place,"_sensors.rds"))%>%filter(!is.na(PM25))%>%
+          mutate(PM25=as.numeric(PM25))%>%
+          select(PM25, geometry)
+        
+        pm25_pal <- colorNumeric(
+          palette = "RdYlGn",
+          reverse = T,
+          domain = c(
+            place_pm25$PM25,
+            place_sensors$PM25
+          )
+        )
+
+        output$map <- renderLeaflet({
+          leaflet() %>% 
+          addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+          addPolygons(
+            data = place_pm25, 
+            fillColor = ~pm25_pal(PM25),
+            fillOpacity = 0.5,
+            color = "white",
+            weight = 0.5,
+            label = ~PM25,
+            highlightOptions = highlightOptions(
+              weight = 2,
+              opacity = 1
+            )
+          ) %>% 
+          addCircleMarkers(
+            data = place_sensors,
+            fillColor = ~pm25_pal(PM25),
+            fillOpacity = 1,
+            color = "black",
+            weight = 0.5,
+            radius = 5,
+            label = ~PM25
+          ) %>% 
+          addLegend(
+            pal = pm25_pal,
+            values = c(
+              place_pm25$PM25,
+              place_sensors$PM25
+            )
+          )
+          
+          
+        })
+       
+})
+```
+
+Column
+-------------------------------------
+
+### Monthly PM2.5
+```{r}
+plotlyOutput("plot")
+```
+
+
+```{r, context = "server"}
+observeEvent(input$place, {
+  
+   place<-input$place
+ 
+   place_pm25_voronoi_month <-readRDS(paste0(place,"_pm25_voronoi_month.rds"))
+     
+  output$plot <- renderPlotly({
+    place_pm25_voronoi_month %>% 
+      ggplot() +
+      geom_line(
+        aes(
+          x = date,
+          y = PM25,
+          color = Location
+        )
+      )%>% 
+      config(displayModeBar = F)
+  })
+  
+})
+```

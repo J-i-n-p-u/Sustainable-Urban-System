@@ -1,0 +1,1051 @@
+---
+title: "A3_routing"
+output: html_document
+---
+**Group member: Huanghe YaoJing, Minxue Gu, Jinpu Cao <br> I mainly focused on finding the routing map of the Redwood City (including three ZIPCODE areas) and exploring how EV adoption affects the GHG.**
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+library(lehdr)
+library(knitr)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(leaflet)
+library(mapboxapi)
+library(tidytransit)
+library(readxl)
+library(knitr)
+library(plotly)
+Sys.setenv(CENSUS_KEY="60e044e0b171438ffa284a00c4a369df21caa10e")
+```
+
+```{r,eval=FALSE}
+mb_access_token("sk.eyJ1IjoianBtYXBib3gxIiwiYSI6ImNreXMzZ2QycDB6emEyb283YmsxM3E3OTcifQ.n15SX--1APWAjkd6GJ8qrw", install = T)
+
+readRenviron("~/.Renviron")
+```
+
+The report is analyzing GHG emissions in the Redwood City. Vehicle emissions and building emissions are considered in the report. The city can be represented by three ZIP codes (94061, 94063, 94065). To get higher accuracy, the commute emissions are computed based on blocks group (cbg) granularity. 
+
+```{r, eval=FALSE}
+zctas <- zctas()
+
+rwc_boundary <- places("CA", progress_bar = F) %>% 
+  filter(NAME == "Redwood City")
+
+zip <- zctas %>% 
+  st_centroid() %>% 
+  .[rwc_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(zctas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+saveRDS(zip, "zip.rds")
+```
+
+```{r}
+zip <- read_rds("zip.rds")
+```
+
+```{r, eval=FALSE}
+# blocks <- blocks("CA")
+blocks <- read_rds('blocks.rds')
+
+zip_blocks <- 1:nrow(zip) %>% 
+  map_dfr(function(i){
+    blocks %>%
+      st_centroid() %>%
+      .[zip[i,], ] %>% 
+      mutate(
+        zipcode = zip[i,]$ZCTA5CE10
+      )
+})
+
+zip_blocks <- zip_blocks %>% 
+  mutate(cbg = GEOID10 %>% substr(1,12))
+
+saveRDS(zip_blocks,"zip_blocks.rds")
+```
+
+```{r}
+zip_blocks <- read_rds("zip_blocks.rds")
+```
+
+We start from block level. The following mapping shows the three ZIPCODE areas and the city area. Some blocks are not only in the boundary of one ZIPCODE. For this situation, we define that a block' ZIPCODE is the one that includes its centroid. Under this assumption, we find 984 blocks (48 block groups) in the Redwood City (three ZIPCODE).
+
+```{r}
+rwc_boundary <- places("CA", progress_bar = F) %>% 
+  filter(NAME == "Redwood City")
+zip <- read_rds("zip.rds")
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = rwc_boundary,
+    fillColor = "red",
+    fill = F,
+    weight = 4,
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addPolygons(
+    data = zip,
+    fill = F,
+    weight = 3,
+    color = "green",
+    label = ~GEOID10
+  ) 
+```
+
+
+## 1 Analysis of Vehicle Emissions
+
+LODES 2013 to 2019 data are used to calculate commute emissions for the city as both an origin and destination. There are some different cases from the course demo. In the section, we define `outbound` as beyond the boundaries of the city (the union area of three ZIPCODE), rather than beyond the boundaries of one ZIPCODE. In this situation, the commute between the three ZIPCODE areas should be considered as the internal commute. However, to be more accurate, we use three coordinates (the centroids of three ZIPCODE area) as our destinations instead of the centroid of the city.  
+ 
+```{r, eval=FALSE}
+full_zip_od <- 2013:2019 %>% 
+  map_dfr(function(year){
+    
+    print(year)
+    
+    temp <- read_csv(paste0("G:/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_", year, ".csv.gz")) %>% 
+      filter(
+        h_geocode %in% zip_blocks$GEOID10 |
+          w_geocode %in% zip_blocks$GEOID10
+      ) %>% 
+      mutate(year = year)
+    
+    saveRDS(temp, paste0("temp_od_", year, ".rds"))
+    
+    return(temp)
+    
+  })
+
+saveRDS(full_zip_od, 'full_zip_od.rds')
+```
+
+```{r}
+full_zip_od <- read_rds('full_zip_od.rds')
+```
+
+```{r, eval=FALSE}
+full_zip_od_clean <- full_zip_od %>% 
+  select(-createdate) %>% 
+  filter(!(
+    h_geocode %in% zip_blocks$GEOID10 &
+      w_geocode %in% zip_blocks$GEOID10
+  )) %>% 
+  mutate(
+    direction = ifelse(
+      h_geocode %in% zip_blocks$GEOID10,
+      "outbound",
+      "inbound"
+    )
+  )
+
+saveRDS(full_zip_od_clean,"full_zip_od_clean.rds")
+```
+
+```{r}
+full_zip_od_clean <- readRDS("full_zip_od_clean.rds")
+```
+
+```{r, eval=FALSE}
+full_zip_od_routing <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    destination = ifelse(
+      direction == "outbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>% substr(1,12),
+    tract = origin %>% substr(1,11)
+  )%>%
+  filter(!duplicated(cbg)) %>% 
+  left_join(zip_blocks %>%
+              select(GEOID10,zipcode)%>%
+              st_drop_geometry(), by = c ("destination" = "GEOID10"))
+
+saveRDS(full_zip_od_routing,"full_zip_od_routing.rds")
+```
+
+```{r}
+full_zip_od_routing <- readRDS("full_zip_od_routing.rds")
+```
+
+
+```{r, eval=FALSE}
+ca_cbgs <- block_groups("CA", cb = T, progress_bar = F)
+
+zip_od_origin <-
+  full_zip_od_routing %>% 
+  select(cbg) %>% 
+  left_join(ca_cbgs %>% select(cbg = GEOID)) %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+zip_od_destination <-
+  full_zip_od_routing %>% 
+  select(zipcode) %>% 
+  left_join(zip, by = c("zipcode" = "GEOID10")) %>%  
+  st_as_sf()%>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+# saveRDS(zip_od_destination,"zip_od_destination.rds")
+# zip_od_destination <- readRDS("zip_od_destination.rds")
+```
+
+```{r, eval=FALSE}
+zip_od_route <- 
+  1:ceiling(nrow(zip_od_origin)/1000) %>% 
+  map_dfr(function(y){
+    
+    print(y)
+    
+    temp <- (y * 1000 - 999) : pmin(y * 1000, nrow(zip_od_origin)) %>% 
+      map_dfr(function(x){
+        tryCatch(
+          mb_directions(
+            origin = zip_od_origin[x, ],
+            destination = zip_od_destination[x, ],
+            profile = "driving-traffic"
+          ) %>% 
+            mutate(id = x),
+          error = function(e){
+            data.frame(id = x)
+          }
+        )
+      }) %>% 
+      st_as_sf()
+      
+      saveRDS(temp, paste0("temp",y,".rds"))
+      
+      return(temp)
+    
+  })
+
+saveRDS(zip_od_route, 'zip_od_route.rds')
+```
+
+```{r}
+zip_od_route <- read_rds("zip_od_route.rds")
+```
+
+The following mapping shows routing from block groups (except the Redwood City) in CA to three ZIPCODE areas in the Redwood City from 2013 to 2019.
+
+```{r}
+leaflet() %>%
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>%
+  addPolylines(
+    data = zip_od_route 
+  )
+```
+
+```{r}
+full_zip_od_routed <- full_zip_od_routing %>% 
+  cbind(zip_od_route)
+
+full_zip_od_final <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = substr(origin, 1, 12)
+  ) %>% 
+  left_join(
+    full_zip_od_routed %>% 
+      select(cbg, duration, distance, zipcode)
+  ) %>% 
+  mutate(
+    visits = S000 * 261
+  )
+```
+
+Next, we’ll factor in trip mode based on travel time (ACS data) to estimate what percentage of trips made on each of these routes is by single occupancy vehicle or carpool. we’ll assume that the distribution of modes we see for commute trips will be similar enough to the distribution of modes for trips overall.
+
+```{r, eval=FALSE}
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+
+travel_time_mode <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  pull(COUNTYFP) %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2019,
+      region = "block group:*",
+      regionin = paste0("state:06+county:", x),
+      vars = "group(B08134)"
+    )
+  }) %>% 
+  mutate(
+    cbg =
+      paste0(state,county,tract,block_group)
+  ) %>%
+  filter(cbg %in% full_zip_od_final$cbg) %>% 
+  select(!c(GEO_ID,state,county,tract,block_group,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+  separate(
+    label,
+    into = c(NA, NA, "total", "mode", "carpool", "time"),
+    sep = "!!"
+  )
+
+saveRDS(travel_time_mode, 'travel_time_mode.rds')
+```
+
+```{r}
+travel_time_mode <- read_rds('travel_time_mode.rds')
+travel_time_mode<- travel_time_mode %>% 
+  mutate(
+    mode = case_when(
+      total %in% c(
+        "Less than 10 minutes",
+        "10 to 14 minutes",
+        "15 to 19 minutes",
+        "20 to 24 minutes",
+        "25 to 29 minutes",
+        "30 to 34 minutes",
+        "35 to 44 minutes",
+        "45 to 59 minutes",
+        "60 or more minutes"
+      ) ~ "Total",
+      mode == "Drove alone:" ~ mode,
+      carpool %in% c(
+        "In 2-person carpool:",
+        "In 3-or-more-person carpool:"
+      ) ~ carpool
+    ),
+    time = case_when(
+      mode == "Total" ~ total,
+      mode == "Drove alone:" ~ carpool,
+      mode == carpool ~ time
+    )
+  ) %>% 
+  filter(!is.na(time)) %>% 
+  select(-total, -carpool) %>% 
+  pivot_wider(
+    names_from = mode,
+    values_from = estimate
+  ) %>% 
+  mutate(
+    perc_veh1 = `Drove alone:`/Total,
+    perc_veh2 = `In 2-person carpool:`/Total,
+    perc_veh3 = `In 3-or-more-person carpool:`/Total
+  )
+```
+
+```{r}
+zip_trips <-
+  full_zip_od_final  %>% 
+  mutate(
+    time = case_when(
+      duration < 10 ~ "Less than 10 minutes",
+      duration < 15 ~ "10 to 14 minutes",
+      duration < 20 ~ "15 to 19 minutes",
+      duration < 25 ~ "20 to 24 minutes",
+      duration < 30 ~ "25 to 29 minutes",
+      duration < 35 ~ "30 to 34 minutes",
+      duration < 45 ~ "35 to 44 minutes",
+      duration < 60 ~ "45 to 59 minutes",
+      TRUE ~ "60 or more minutes"
+    )
+  ) %>% 
+  left_join(
+    travel_time_mode %>% 
+      select(
+        cbg,
+        time,
+        perc_veh1,
+        perc_veh2,
+        perc_veh3
+      ),
+    by = c("cbg", "time")
+  ) %>% 
+  mutate(
+    vehicles = 
+      visits * perc_veh1 + 
+      visits * perc_veh2 / 2 +
+      visits * perc_veh3 / 3,
+    vmt = vehicles * distance *2
+  )
+
+saveRDS(zip_trips, "zip_trips.rds")
+zip_trips <- read_rds("zip_trips.rds")
+```
+
+```{r}
+sum_zip_trips <- zip_trips %>% 
+  filter(!is.na(vehicles)) %>% 
+  filter(!is.na(vmt)) %>% 
+  group_by(year, direction, zipcode) %>% 
+  summarize(
+    visits = sum(visits, rm.na=T),
+            vehicles = sum(vehicles, rm.na=T),
+            vmt = sum(vmt, rm.na=T))%>% 
+  ungroup()
+
+sum_zip_trips_yr <- sum_zip_trips %>% 
+  group_by(year) %>%
+  summarize(
+    visits = sum(visits, rm.na=T),
+            vehicles = sum(vehicles, rm.na=T),
+            vmt = sum(vmt, rm.na=T))%>% 
+  ungroup()
+
+# sum(zip_trips)
+```
+
+Finally, we use the California Air Resources Board (CARB) Emission Factors (EMFAC) model which includes emissions rates data, year by year. The allocate our trips and VMT to these six different vehicle and fuel categories and calculate the final GHG emissions as we do in the course demo.
+
+```{r}
+emfac <- 
+  read_csv("EMFAC2021-ER-202xClass-BayAreaAQMD-2021-Summer-20220206143938.csv", skip = 8) %>% 
+  transmute(
+    Category = `Vehicle Category`,
+    Fuel_Type = Fuel,
+    Percent_Trips = Trips/sum(Trips),
+    Percent_Miles = `Total VMT`/sum(`Total VMT`),
+    `MTCO2_Running_Exhaust` = CO2_RUNEX/`Total VMT`,
+    `MTCO2_Start_Exhaust` = CO2_STREX/Trips
+  )
+```
+
+```{r}
+zip_trips_ghg <-
+  emfac %>% 
+  mutate(
+    trips = Percent_Trips * sum(zip_trips$visits, na.rm = T),
+    vmt = Percent_Miles * sum(zip_trips$vmt, na.rm = T),
+    ghg = vmt*MTCO2_Running_Exhaust + trips*MTCO2_Start_Exhaust*2
+  )
+
+zip_trips_ghg <- 
+  2013:2019 %>% 
+  map_dfr(function(yr){
+    emfac %>%
+      mutate(
+        year = yr,
+    trips = Percent_Trips * sum(zip_trips %>% 
+                                  filter(year == yr) %>% pull(visits), na.rm = T),
+    vmt = Percent_Miles * sum(zip_trips %>% 
+                                  filter(year == yr) %>% pull(vmt), na.rm = T),
+    ghg = vmt*MTCO2_Running_Exhaust + trips*MTCO2_Start_Exhaust*2
+  )
+})
+
+saveRDS(zip_trips_ghg,"zip_trips_ghg.rds")
+zip_trips_ghg <- read_rds("zip_trips_ghg.rds")
+
+zip_trips_ghg_2013_2019 <- zip_trips_ghg %>%group_by(year)%>%summarise(ghg = sum(ghg))
+```
+
+The following table shows the summary of analysis on the vehicle GHG emissions.
+```{r echo = FALSE, results = 'asis'}
+kable(sum_zip_trips_yr %>% 
+         left_join(zip_trips_ghg_2013_2019), caption = "A summary of Redwood City Communte (2013-2019)")
+```
+
+```{r,eval=FALSE}
+print()
+# (sum_zip_trips_yr$vehicles[7]/sum_zip_trips_yr$vehicles[1])^(1/7) - 1
+(sum_zip_trips_yr$visits[7]/sum_zip_trips_yr$visits[1])^(1/7) - 1
+# sum_zip_trips_yr$visits[7]/sum_zip_trips_yr$visits[1]
+```
+
+
+## 2 Analysis of Building Emissions
+The section uses PG&E 2013 to 2019 data at the ZIP code level and includes residential and commercial electricity and gas usage. The following chart shows the PG&E electricity emissions rate for converting from electricity or gas units to CO2 equivalent 
+```{r}
+pge_elec_emissions_factor <-
+  data.frame(
+    year = c(2013:2019),
+    factor = c(427,435,405,294,210,206,2.68)
+  )
+
+pge_elec_emissions_factor %>% 
+  ggplot() +
+  geom_line(
+    aes(
+      x = year,
+      y = factor
+    )
+  ) +
+  labs(
+    x = "Year",
+    y = "Pounds of CO2 per MHh",
+    title = "PG&E electricity emissions rate"
+  )
+```
+
+### 2.1 Total Energy Usage
+We use the same coding as the textbook to collect the PG&E data and find the same problems and deal with them using the same method. Besides, there is a tiny error (column name different) in 2014 Q3 gas data downloaded from the website. I use the data in our share folders. 
+
+```{r, eval=FALSE}
+pge_data <- 
+  2013:2019 %>% 
+  map_dfr(function(yr){
+    
+    factor <- 
+      pge_elec_emissions_factor %>% 
+      filter(year == yr) %>% 
+      pull(factor)
+    
+    1:4 %>% 
+      map_dfr(function(quarter){
+        
+        c("Electric","Gas") %>% 
+          map_dfr(function(type){
+            
+            filename <- 
+              paste0(
+                "G:/Shared drives/SFBI/Data Library/PG&E/",
+                "PGE_",
+                yr,
+                "_Q",
+                quarter,
+                "_",
+                type,
+                "UsageByZip.csv"
+              )
+            temp <- read_csv(filename)
+            
+            if(yr == 2017 & quarter == 4) {
+              temp <- 
+                temp %>% 
+                filter(MONTH != 9)
+            }
+            
+            temp <-
+              temp %>% 
+              rename_all(toupper) %>% 
+              mutate(
+                TOTALKBTU = ifelse(
+                  substr(CUSTOMERCLASS,1,1) == "E",
+                  TOTALKWH * 3.412,
+                  TOTALTHM * 99.976
+                ),
+                TOTALTCO2E = ifelse(
+                  substr(CUSTOMERCLASS,1,1) == "E",
+                  TOTALKWH/1000 * factor * 0.000453592,
+                  TOTALTHM * 0.00531
+                )
+              ) %>% 
+              select(
+                ZIPCODE,
+                YEAR,
+                MONTH,
+                CUSTOMERCLASS,
+                TOTALKBTU,
+                TOTALTCO2E,
+                TOTALCUSTOMERS
+              )
+            
+          })
+        
+      })
+    
+  })
+
+saveRDS(pge_data, "pge_data_1.rds")
+```
+
+
+```{r}
+pge_data <- read_rds("pge_data_1.rds")
+
+pge_data_rwc <-
+  pge_data %>%
+  filter(ZIPCODE %in% c("94061", "94063", "94065")) %>%
+  filter(
+    CUSTOMERCLASS %in% c(
+      "Elec- Commercial",
+      "Elec- Residential",
+      "Gas- Commercial",
+      "Gas- Residential"
+    )
+  ) %>%
+  mutate(ENERGYTYPE = case_when(
+    CUSTOMERCLASS %in%  c("Elec- Commercial",
+                          "Elec- Residential") ~ "Elec",
+    CUSTOMERCLASS %in%  c("Gas- Commercial",
+                          "Gas- Residential") ~ "Gas"
+  )) %>%
+  mutate(
+    BUILDINGTYPE = case_when(
+      CUSTOMERCLASS %in% c("Elec- Commercial",
+                           "Gas- Commercial") ~ "Commercial",
+      CUSTOMERCLASS %in% c("Elec- Residential",
+                           "Gas- Residential") ~ "Residential"
+    )
+  ) %>%
+  group_by(ZIPCODE, ENERGYTYPE, YEAR, BUILDINGTYPE, CUSTOMERCLASS) %>%
+  summarize(
+    TOTALKBTU = sum(TOTALKBTU, na.rm = T),
+    TOTALTCO2E = sum(TOTALTCO2E, na.rm = T),
+    TOTALCUSTOMERS = mean(TOTALCUSTOMERS, na.rm = T)
+  ) %>%
+  group_by(ENERGYTYPE, YEAR, BUILDINGTYPE, CUSTOMERCLASS) %>%
+  summarize(across(c(TOTALKBTU, TOTALTCO2E, TOTALCUSTOMERS),
+                   ~ sum(., na.rm = T)))
+
+saveRDS(pge_data_rwc,"pge_data_rwc.rds")
+```
+
+The following chart shows Annual Energy Usage in redwood city (in GBTU), 2013 to 2019. We can find the commercial gas usages are almost increasing continuously these 7 years.
+
+```{r}
+chart <- ggplot(pge_data_rwc,
+       aes(x = as.factor(YEAR),
+           y = TOTALKBTU / 1000000)) +
+  geom_bar(stat = "identity",
+           aes(fill = CUSTOMERCLASS),
+           position = "dodge") +
+  labs(x = "Year", 
+       y = "GBTU", 
+       title = "Annual Energy Usage in redwood city (in GBTU), 2013 to 2019") +
+  scale_fill_discrete(name = "CUSTOMERCLASS") 
+chart%>% ggplotly()
+```
+
+The following chart shows Annual Energy Usage in redwood city (in tCO2e), 2013 to 2019. We can find the gas usages(in tCO2e) are almost increasing continuously but the electricity usages (in tCO2e) are decreasing recent years.
+
+```{r}
+annual_energy <-
+ggplot(
+  pge_data_rwc, 
+  aes(
+    x = as.factor(YEAR), 
+    y = TOTALTCO2E
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = CUSTOMERCLASS), position = "dodge") + 
+  labs(x = "Year", y = "tCO2e", title = "Annual Energy Usage in redwood city (in tCO2e), 2013 to 2019") + 
+  scale_fill_discrete(name="CUSTOMERCLASS")
+annual_energy %>% ggplotly()
+```
+
+
+
+We use the ACS dataset to get the total population of the Redwood City from 2013 to 2019. We can get the the Redwood City annual residential energy use per resident, 2013 to 2019, as shown in the following chart. 
+```{r, eval=FALSE}
+final_result_pop0 <- 2013:2019 %>% 
+  map_dfr(function(yr){
+    getCensus(
+      name = "acs/acs5",
+      vintage = yr,
+      region = "block group:*", 
+      regionin = "state:06+county:081",
+      vars = "B01001_001E"
+    ) %>%
+    mutate(
+      YEAR = yr,
+      cbg =
+        paste0(state,county,tract,block_group)
+    ) %>% 
+    select(YEAR, cbg,  pop = B01001_001E)
+  })
+
+zip_blocks <- read_rds("zip_blocks.rds")
+
+final_result_pop <- final_result_pop0 %>% 
+  mutate(cbg = as.character(cbg)) %>% 
+  left_join(zip_blocks %>% 
+              select(cbg, 
+                     zip_code = zipcode)%>%
+              st_drop_geometry() %>%
+              filter(!duplicated(cbg))
+              )%>%
+  filter(!is.na(zip_code))
+
+total_pop_zipcode <-
+  final_result_pop %>%
+  group_by(YEAR,zip_code)%>%
+  summarize(total_pop_zip = sum(pop, na.rm = T))
+
+total_pop_rwc <-
+  total_pop_zipcode%>%
+  ungroup()%>%
+  select(-zip_code)%>%
+  group_by(YEAR)%>%
+  summarise(total_pop_rwc = sum(total_pop_zip, na.rm = T))
+
+saveRDS(total_pop_rwc, "total_pop_rwc.rds")
+```
+
+```{r}
+total_pop_rwc <- read_rds("total_pop_rwc.rds")
+```
+
+```{r}
+energy_per_resident <-
+  pge_data_rwc%>%
+  left_join(total_pop_rwc)%>%
+  filter(BUILDINGTYPE == "Residential")%>%
+  mutate(AVGKBTU = TOTALKBTU / total_pop_rwc)%>%
+  group_by(YEAR, ENERGYTYPE) %>% 
+  ggplot(
+    aes(
+      x = as.factor(YEAR), 
+      y = AVGKBTU
+    )
+  ) + 
+  geom_bar(stat = "identity", aes(fill = ENERGYTYPE), position = "dodge") + 
+  labs(x = "Year", y = "energy use per resident", title = "Redwood City annual residential energy use per resident, 2013 to 2019") + 
+  scale_fill_discrete(name="Type")
+energy_per_resident %>% ggplotly()
+```
+
+### 2.2 Normalize the Energy Usage
+To be more accurate, we use Census population data to estimate residential energy use per resident and 
+LODES WAC data to estimate commercial energy use per job. Besides, we use the Cal-Adapt Degree Day tool to collect HDDs and CDDs for your geography from 2013 to 2019 and then use these to further normalize your data. Here, we assume that the we only use gas to heat and electricity to provide cold air. So when we conduct the normalization with HDD and CDD, gas usage should be normalized by HDD and electricity usage should be normalized by CDD. 
+
+```{r, eval=FALSE}
+HDD <- read_csv("HDD.csv")
+CDD <- read_csv("CDD.csv")
+
+HDD  <- HDD %>% filter(boundary %in% c(2013:2019)) %>%
+  separate(
+    locagrid,
+    into = c(NA,"CanESM2", NA,NA,NA),
+    sep = ","
+  )%>%
+  rename("YEAR"=boundary)%>%
+  mutate("YEAR" = as.numeric(YEAR))
+
+saveRDS(HDD, "HDD.rds")
+
+CDD <- CDD %>% filter(boundary %in% c(2013:2019)) %>%
+  separate(
+    locagrid,
+    into = c(NA,"CanESM2", NA,NA,NA),
+    sep = ","
+  )%>%
+  rename("YEAR"=boundary)%>%
+  mutate("YEAR" = as.numeric(YEAR))
+
+saveRDS(CDD, "CDD.rds")
+```
+
+```{r}
+HDD <- read_rds("HDD.rds")
+CDD <- read_rds("CDD.rds")
+```
+
+
+```{r}
+KBTU_resident_CDD <-
+  pge_data_rwc%>%
+  left_join(CDD)%>%
+  left_join(total_pop_rwc)%>%
+  filter(BUILDINGTYPE == "Residential")%>%
+  filter(ENERGYTYPE == "Elec")%>%
+  mutate(AVGKBTU = TOTALKBTU / total_pop_rwc)%>%
+  group_by(YEAR) %>%
+  mutate(KBTU_resident_CDD = AVGKBTU / as.numeric(CanESM2))
+
+KBTU_resident_HDD <-
+  pge_data_rwc%>%
+  left_join(HDD)%>%
+  left_join(total_pop_rwc)%>%
+  filter(BUILDINGTYPE == "Residential")%>%
+  filter(ENERGYTYPE == "Gas")%>%
+  mutate(AVGKBTU = TOTALKBTU / total_pop_rwc)%>%
+  group_by(YEAR) %>%
+  mutate(KBTU_resident_HDD = AVGKBTU / as.numeric(CanESM2))
+```
+
+```{r}
+KBTU_resident <-
+  rbind(KBTU_resident_HDD,KBTU_resident_CDD)%>%
+  mutate(type = 
+           case_when(
+             !is.na(KBTU_resident_CDD) ~ "KBTU_resident_CDD, Elec",
+            is.na(KBTU_resident_CDD) ~ "KBTU_resident_HDD, Gas"
+            )
+  )%>%
+  mutate(value =
+           case_when(type == "KBTU_resident_CDD, Elec" ~ KBTU_resident_CDD,
+                     type == "KBTU_resident_HDD, Gas" ~ KBTU_resident_HDD))
+```
+
+```{r, eval=FALSE}
+zip_wac <-
+  2013:2019 %>%
+  map_dfr(function(year){
+    grab_lodes(
+      state = "ca",
+      year = year,
+      lodes_type = "wac",
+      job_type = "JT01",
+      segment = "S000",
+      state_part = "main",
+      agg_geo = "bg"
+    ) %>%
+    filter(w_bg %in% zip_blocks$cbg )
+  })
+
+zip_jobs <- zip_wac %>% 
+  mutate(YEAR = year) %>% 
+  group_by(YEAR) %>% 
+  summarise(
+    num_jobs = sum(C000)
+  )
+
+saveRDS(zip_jobs, "zip_jobs.rds")
+```
+
+```{r}
+zip_jobs <- read_rds("zip_jobs.rds")
+```
+
+```{r}
+KBTU_job_CDD <-
+  pge_data_rwc%>%
+  left_join(CDD)%>%
+  left_join(zip_jobs)%>%
+  filter(BUILDINGTYPE == "Commercial")%>%
+  filter(ENERGYTYPE == "Elec")%>%
+  mutate(AVGKBTU = TOTALKBTU / num_jobs)%>%
+  group_by(YEAR) %>%
+  mutate(KBTU_job_CDD = AVGKBTU / as.numeric(CanESM2))
+
+KBTU_job_HDD <-
+  pge_data_rwc%>%
+  left_join(HDD)%>%
+  left_join(zip_jobs)%>%
+  filter(BUILDINGTYPE == "Commercial")%>%
+  filter(ENERGYTYPE == "Gas")%>%
+  mutate(AVGKBTU = TOTALKBTU / num_jobs)%>%
+  group_by(YEAR) %>%
+  mutate(KBTU_job_HDD = AVGKBTU / as.numeric(CanESM2))
+```
+
+```{r}
+KBTU_commercial <-
+  rbind(KBTU_job_HDD,KBTU_job_CDD)%>%
+  mutate(type = 
+           case_when(
+             !is.na(KBTU_job_CDD) ~ "KBTU_job_CDD, Elec",
+            is.na(KBTU_job_CDD) ~ "KBTU_job_HDD, Gas"
+            )
+  )%>%
+  mutate(value =
+           case_when(type == "KBTU_job_CDD, Elec" ~ KBTU_job_CDD,
+                     type == "KBTU_job_HDD, Gas" ~ KBTU_job_HDD))
+
+```
+
+The following chart shows the result of normalized energy usage in the Redwood City from 2013 to 2019. From the chart we can see the similar trends. We can find the residential gas (KBTU/resident/HDD) and commercial gas (KBTU/job/HDD) nearly do not change in the recent years. However, the residential electricity (KBTU/resident/CDD) and commercial electricity (KBTU/job/CDD) keep decreasing recent years.
+
+```{r}
+KBTU_commercial_residential <-
+  rbind(KBTU_commercial,KBTU_resident)
+
+chart <- ggplot(
+  KBTU_commercial_residential, 
+  aes(
+    x = as.factor(YEAR), 
+    y = value
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = type), position = "dodge") + 
+  labs(x = "Year", y = "value", title = "commercial and residential energy consumption in redwood city") + 
+  scale_fill_discrete(name="type") 
+
+chart %>% ggplotly()
+saveRDS(KBTU_commercial_residential, "KBTU_commercial_residential.rds")
+```
+
+
+
+## 3 Reflections 
+### 3.1 Total GHG Emissions 
+```{r}
+zip_trips_ghg_sum<-
+  zip_trips_ghg%>%mutate(type=paste0(Category,",",Fuel_Type))%>%
+  group_by(year)%>%
+  summarise(total_ghg = sum(ghg,na.rm=T))
+
+zip_trips_ghg_sum_co2<-
+  zip_trips_ghg_sum%>%
+  rename(TOTALTCO2E=total_ghg)%>%
+  mutate(type = "vehicle emission")
+```
+
+```{r}
+pge_data_rwc_co2<-
+  pge_data_rwc%>%
+  ungroup()%>%
+  select(c("YEAR","CUSTOMERCLASS","TOTALTCO2E"))%>%
+  rename(type=CUSTOMERCLASS)%>%rename(year=YEAR)%>%
+  mutate(type = paste0("building emission",",",type))
+```
+
+The following chart shows the total vehicle and building emissions in the Redwood City from 2013 to 2019. We can see the total GHG emissions are decreasing in general these years. However, the trend is not for each component. 
+
+```{r}
+rwc_ghg <-
+  pge_data_rwc_co2%>%
+  rbind(zip_trips_ghg_sum_co2)%>%
+  mutate(TOTALTCO2E = as.numeric(TOTALTCO2E))%>%
+  mutate(year = as.numeric(year))
+
+chart <- ggplot(
+    rwc_ghg,
+    aes(
+      x = year,
+      y = TOTALTCO2E,
+      fill = type
+    )
+  ) + 
+  geom_area()+
+    labs(x = "year", y = "TOTALTCO2E", title = "total GHG emission in redwood city, 2013-2019") 
+chart %>% ggplotly()
+```
+
+### 3.2 Effect of EV adoption on GHG emissions
+Our group explore many factors that can affect GHG emissions. Our basic methodology is collecting the future data of the factor if it is available and calculating the new GHG emission. If the future data is not available, we assume the value of the factor increase or decrease linearly with time going by and then predict the future by the linear regression.
+
+For the effect of EV adoption on GHG emissions, we assume an annual growth rate of 1% in percent_trip and percent_miles. Because according to the US Energy Information Administration (EIA), electric vehicles will grow from 0.7% of the global light-duty vehicle (LDV) fleet in 2020 to 31% in 2050, reaching 672 million EVs. 
+
+Here, I plan to explore the inverse problem. If the increase rate of `visits` in the future is equal to that in the past 7 years and  the increase rate of `vmt` in the future is equal to that in the past 7 years, how does the increase rate of EV adoption (represented by `Percent_Trips` and `Percent_Miles`) affect the vehicle emissions?
+
+To answer the question, we need to compute the average visits increase rate and average vmt increase rate by the following two equations. Then let's range the increase rate of EV adoption from 0 to 2% each year. More specifically, if the increase rate of EV adoption is 1%, in 2050, the percentage of EV is 30%, which is the case predicted by EIA. 
+
+$$ Visits\ Increase\ Rate\ =\ \left(\frac{{\rm visits}_{2019}}{{\rm visits}_{2013}}\right)^{{\frac{1}{2019-2013}}}-1=0.033 $$
+$$ Vmt\ Increase\ Rate\ =\ \left(\frac{{\rm vmt}_{2019}}{{\rm vmt}_{2013}}\right)^{{\frac{1}{2019-2013}}}-1=0.019 $$
+```{r}
+zip_trips_ghg_2013_2019 <-
+  zip_trips_ghg %>% group_by(year) %>% summarise(ghg = sum(ghg))
+
+visits_r <- 0.033
+vtm_r <- 0.019
+
+rs <- seq(0.0, 0.02, 0.002)
+
+ghg_future <- NULL
+
+for (r in rs) {
+  zip_trips_ghg_new <-
+    0:30 %>%
+    map_dfr(function(yr) {
+      emfac %>%
+        mutate(
+          year = yr + 2019,
+          
+          new_visits = (1 + visits_r) ^ yr * sum(zip_trips %>%
+                                                   filter(year == 2019) %>% pull(visits), na.rm = T),
+          new_vmt = (1 + vtm_r) ^ yr * sum(zip_trips %>%
+                                             filter(year == 2019) %>% pull(vmt), na.rm = T),
+          trips = case_when(
+            Category == "LDA" &
+              Fuel_Type == "Gasoline" ~ (Percent_Trips - r * yr) * new_visits,
+            Category == "LDA" &
+              Fuel_Type == "Diesel" ~ Percent_Trips * new_visits,
+            Category == "LDA" &
+              Fuel_Type == "Electricity" ~ (Percent_Trips + r * yr) * new_visits,
+            
+            Category == "LDT1" &
+              Fuel_Type == "Gasoline" ~ (Percent_Trips - 0.1 * r * yr) * new_visits,
+            Category == "LDT1" &
+              Fuel_Type == "Diesel" ~ Percent_Trips * new_visits,
+            Category == "LDT1" &
+              Fuel_Type == "Electricity" ~ (Percent_Trips + 0.1 * r * yr) * new_visits,
+          ),
+          vmt = case_when(
+            Category == "LDA" &
+              Fuel_Type == "Gasoline" ~ (Percent_Miles - r * yr) * new_vmt,
+            Category == "LDA" &
+              Fuel_Type == "Diesel" ~ Percent_Miles * new_vmt,
+            Category == "LDA" &
+              Fuel_Type == "Electricity" ~ (Percent_Miles + r * yr) * new_vmt,
+            
+            Category == "LDT1" &
+              Fuel_Type == "Gasoline" ~ (Percent_Miles - 0.1 * r * yr) * new_vmt,
+            Category == "LDT1" &
+              Fuel_Type == "Diesel" ~ Percent_Miles * new_vmt,
+            Category == "LDT1" &
+              Fuel_Type == "Electricity" ~ (Percent_Miles + 0.1 * r * yr) * new_vmt,
+          ),
+          ghg = vmt * MTCO2_Running_Exhaust + trips * MTCO2_Start_Exhaust *
+            2
+        )
+    })
+  zip_trips_ghg_new_sum <-
+    zip_trips_ghg_new %>% group_by(year) %>% summarise(ghg = sum(ghg))
+  
+  ghg_future <- rbind(ghg_future, zip_trips_ghg_new_sum %>% mutate(r=r))
+}
+
+# colnames(ghg_future) = c("Year","r1","r2","r3")
+saveRDS(ghg_future, "ghg_future.rds")
+```
+
+The following chart shows the how the EV adoption increase rate impact the vehicle emission in the future 30 years. We can find that with more and more EV adoption, the GHG of vehicles will decrease.
+```{r}
+ghg_future <- read_rds("ghg_future.rds") %>% 
+            mutate(EV_increase_rate = r)
+p<-ggplot(ghg_future,
+          aes(x=year, y=ghg, group=EV_increase_rate)) +
+  geom_line(aes(color=EV_increase_rate))+
+  geom_point(aes(color=EV_increase_rate))+
+  labs(
+    x = "Future Year",
+    y = "GHG (metric tonnes)",
+    title = "Future Vehicle Emission (2020-2050) in the Redwood City"
+  ) 
+p %>% ggplotly()
+```
+
+### 3.3 GHG footprint Allocation
+
+After reading some papers about the GHG footprint Allocation, especially in Scope 3 emissions. Some practical methods report their scope 3 emissions with consumption factor databases, which are ratios that divide the total fuel used by the activity data or tonne.km.(Royo, 2020). Some advanced methods try to refine the consumption factor databases further. I basically agree with the method. But I also think we should consider more factors.  
+
+We took iPhone as an example and talked about how much GHG footprint should be allocated between manufacturers (e.g., iPhone factories in Asia), consumers (e.g., Apple fans), and everyone in the middle (e.g., Apple headquarters in Cupertino)?  I think for this problem, we should not only consider the absolute value of the GHG / consumption factor produced in each process, but also consider the relative value in the whole area. For example, when a manufacturer produce some products, which will produce much more CO2 when users using it comparing to similar products. In this case, the users should not pay all the footprint tax. Because it is the manufacturer's duty to cause the extra life cycle footprint. So, from the point, I think footprint allocation should also consider the relative footprint of one process and who cause the more or less emissions (compare to the average).  
+
+## Summary
+The vehicle emissions and building emissions analyses are useful and instructive. When dealing with vehicle emissions, calculate the `visits` and `vmt` from the routing mapping, which is reasonable and interesting. When tackling the building emissions, the idea of normalizing by population, job and HDD/CDD makes great sense. Finally, for the results, total GHG starts to decrease. But as we can see in 3.2, it depends. If we increase the EV adoption rate, the vehicle emissions will decrease accordingly. But whether the EV adoption will go to its bottleneck (battery, charge,...), we need to explore more. 
+
+Royo, Beatriz. "Measuring and Allocating Scope 3 GHG Emissions." Towards User-Centric Transport in Europe 2. Springer, Cham, 2020. 200-211.
+
+
+
+
+
+
+
+
+

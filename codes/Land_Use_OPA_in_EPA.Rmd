@@ -1,0 +1,920 @@
+---
+title: "Land Use - OPA in EPA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(tigris)
+library(mapview)
+library(censusapi)
+library(plotrix)
+library(tidyverse)
+library(esri2sf)
+library(ggplot2)
+library(hrbrthemes)
+Sys.setenv(CENSUS_KEY="ff1e14b49f3bba9505f6f15ed7f9db5c6894ee3a")
+```
+
+An Opportunity to Purchase ("OPA") Policy gives tenants, qualified nonprofits, or jurisdictions the first opportunity to purchase a residential property or assign their right to purchase to another entity when the owner is ready to sell. The City of East Palo Alto has been considering an OPA policy, which was opposed by many homeowners. According to the government's answers to EPA OPA FAQ, some key features of OPA can directly address the City’s housing challenges and their disproportionate impact on lower-income residents without reducing the value of the house itself in East Palo Alto. But according to the public comments, submitted letters and the discussion in the course (summary on Slack), there are many different opinions about the details of applicability, home value, timelines, affordability, qualified nonprofits, etc. I think most of details are hard to quantitative analysis and need further discussion, such as timelines. 
+
+The report tried to conduct quantitative exploration from the perspective of policy necessity. More specifically, two questions will be answered: whether the housing burden is a relatively serious challenge for most residuals in EPA, whether the single-family dwellings should be included in the policy.
+
+## House Burden Analysis
+### EPA's housing burden
+There are 32 cities in San Mateo County. The City of East Palo Alto's housing burden is compared to other cities' housing burdens in the county based on ACS 2019 5-yr data. The following two figures show the percentage of severe housing burden household for owner-occupied and renter-occupied housing units. Here, the 'severe housing burden' is defined as housing cost exceeds half of income. From the first figure, about 22% of owner-occupied households are experiencing severe housing burden. The indicator of EPA is higher than 96% of other cities' indicators. From the second figure, about 29% of renter-occupied households are experiencing severe housing burden. The indicator of EPA is higher than 80% of other cities' indicators. So, compared with other cities in San Mateo County, the housing burden problem in EPA so serious that the government needs to do something. 
+```{r}
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+
+ca_cities <- places("CA", cb = T, progress_bar = FALSE)
+
+smc <- counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME == 'San Mateo')
+
+smc_cities <- ca_cities %>% 
+  st_centroid() %>% 
+  .[smc, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_cities %>% select(GEOID)) %>% 
+  st_as_sf()
+
+epa <- places("CA", cb = T, progress_bar = FALSE) %>% 
+  filter(NAME=='East Palo Alto')
+```
+
+
+```{r}
+## Compare EPA's housing burden to other cities' housing burden in San Mateo County
+# San Mateo County housing burden, Owner
+
+smc_owner <-  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "place:*", 
+    regionin = "state:06",
+    vars = c(
+      "group(B25095)" # 	HOUSEHOLD INCOME BY SELECTED MONTHLY OWNER COSTS AS A PERCENTAGE OF HOUSEHOLD INCOME IN THE PAST 12 MONTHS
+    )
+  ) %>% 
+  filter(place %in% smc_cities$PLACEFP) %>%
+  mutate(
+    id =
+      paste0(state,place)
+  ) %>% 
+  select(!c(GEO_ID,state,place,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+   separate(
+    label,
+    into = c(NA,NA,"income","perc"),
+    sep = "!!"
+    
+    
+    
+  ) %>% 
+  filter(!is.na(perc)) %>% 
+  group_by(id, perc) %>% 
+  summarize(
+    estimate = sum(estimate, na.rm = T)
+  ) %>% 
+  mutate(
+    moderate_hb = 
+      ifelse(
+        perc %in% c("30.0 to 34.9 percent", 
+                    "35.0 to 39.9 percent",
+                    "40.0 to 49.9 percent"),
+        estimate,
+        0
+      ),
+    severe_hb = 
+      ifelse(
+        perc == "50.0 percent or more",
+        estimate,
+        0
+      )
+  ) %>% 
+  group_by(id) %>% 
+  summarize(
+    total = sum(estimate, na.rm = T),
+    moderate_hb = sum(moderate_hb, na.rm = T) / total * 100,
+    severe_hb = sum(severe_hb, na.rm = T) / total * 100
+  ) %>% 
+  mutate(
+    mhb_rank = rank(-moderate_hb) / length(moderate_hb) *100,
+    shb_rank = rank(-severe_hb) / length(severe_hb) *100,
+    GEOID = id
+  ) %>%
+  left_join(smc_cities %>% select(GEOID, NAME)) %>% 
+  st_as_sf()
+
+pal <- colorNumeric(
+  palette = "Purples",
+  domain = 
+    smc_owner$severe_hb
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = smc_owner,
+    fillColor = ~pal(severe_hb),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1,
+    label = ~paste0(round(severe_hb,2)
+      , 
+      "% in ",
+      NAME
+      
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addPolygons(
+    data = smc_owner %>% filter(NAME == 'East Palo Alto'),
+    fill = F,
+    weight = 4,
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addLegend(
+    data = smc_owner,
+    pal = pal,
+    values = ~severe_hb,
+    title = "The % of severe housing burdened <br> households (owner, San Mateo)"
+  )
+
+# print(paste('moderate_hb rank:', smc_owner %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$mhb_rank, '%'))
+# print(paste('severe_hb rank:', smc_owner %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$shb_rank, '%'))
+```
+
+```{r}
+# San Mateo County housing burden, Renter
+
+smc_renter <-  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "place:*", 
+    regionin = "state:06",
+    vars = c(
+      "group(B25074)" # 	HOUSEHOLD INCOME BY GROSS RENT AS A PERCENTAGE OF HOUSEHOLD INCOME IN THE PAST 12 MONTHS
+    )
+  ) %>% 
+  filter(place %in% smc_cities$PLACEFP) %>%
+  mutate(
+    id =
+      paste0(state,place)
+  ) %>% 
+  select(!c(GEO_ID,state,place,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+   separate(
+    label,
+    into = c(NA,NA,"income","perc"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(perc)) %>% 
+  group_by(id, perc) %>% 
+  summarize(
+    estimate = sum(estimate, na.rm = T)
+  ) %>% 
+  mutate(
+    moderate_hb = 
+      ifelse(
+        perc %in% c("30.0 to 34.9 percent", 
+                    "35.0 to 39.9 percent",
+                    "40.0 to 49.9 percent"),
+        estimate,
+        0
+      ),
+    severe_hb = 
+      ifelse(
+        perc == "50.0 percent or more",
+        estimate,
+        0
+      )
+  ) %>% 
+  group_by(id) %>% 
+  summarize(
+    total = sum(estimate, na.rm = T),
+    moderate_hb = sum(moderate_hb, na.rm = T) / total * 100,
+    severe_hb = sum(severe_hb, na.rm = T) / total * 100
+  ) %>% 
+  filter(!is.na(severe_hb)) %>% 
+  mutate(
+    mhb_rank = rank(-moderate_hb) / length(moderate_hb) *100,
+    shb_rank = rank(-severe_hb) / length(severe_hb) *100,
+    GEOID = id
+  ) %>%
+  left_join(smc_cities %>% select(GEOID, NAME)) %>% 
+  st_as_sf()
+
+pal <- colorNumeric(
+  palette = "Purples",
+  domain = 
+    smc_renter$severe_hb
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = smc_renter,
+    fillColor = ~pal(severe_hb),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1,
+    label = ~paste0(round(severe_hb,2)
+      , 
+      "% in ",
+      NAME
+      
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addPolygons(
+    data = smc_renter %>% filter(NAME == 'East Palo Alto'),
+    fill = F,
+    weight = 4,
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addLegend(
+    data = smc_renter,
+    pal = pal,
+    values = ~severe_hb,
+    title = "The % of severe housing burdened <br> households (renter, San Mateo)"
+  )
+
+# print(paste('moderate_hb rank:', smc_renter %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$mhb_rank, '%'))
+# print(paste('severe_hb rank:', smc_renter %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$shb_rank, '%'))
+```
+
+There are 3076 (39.8%) owner-occupied housing units and 4648 (60.2%) renter-occupied housing units in the City of East Palo Alto. The pie chart below shows the proportion of housing burden in owner-occupied housing units and renter-occupied housing units. From the chart, the housing burdens of renter-occupied housing units are higher than owner-occupied housing units (higher % of moderate housing burden and severe housing burden). 
+
+```{r}
+## EPA's housing burden
+# owner
+owner = smc_owner %>% filter(NAME == 'East Palo Alto') %>% .$total
+owner_m = smc_owner %>% filter(NAME == 'East Palo Alto') %>% .$moderate_hb
+owner_m = round(owner_m * owner / 100)
+owner_s = smc_owner %>% filter(NAME == 'East Palo Alto') %>% .$severe_hb
+owner_s = round(owner_s * owner / 100)
+owner_n = owner - owner_m - owner_s
+
+# print('owner')
+# print(paste('EPA total:', smc_owner %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$total))
+# print(paste('EPA moderate housing burden:', smc_owner %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$moderate_hb, '%'))
+# print(paste('EPA severe housing burden:', smc_owner %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$severe_hb, '%'))
+
+# renter
+renter = smc_renter %>% filter(NAME == 'East Palo Alto') %>% .$total
+renter_m = smc_renter %>% filter(NAME == 'East Palo Alto') %>% .$moderate_hb
+renter_m = round(renter_m * renter / 100)
+renter_s = smc_renter %>% filter(NAME == 'East Palo Alto') %>% .$severe_hb
+renter_s = round(renter_s * renter / 100)
+renter_n = renter - renter_m - renter_s
+
+# print('renter')
+# print(paste('EPA total:', smc_renter %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$total))
+# print(paste('EPA moderate housing burden:', smc_renter %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$moderate_hb, '%'))
+# print(paste('EPA severe housing burden:', smc_renter %>% 
+#         filter(NAME == 'East Palo Alto') %>% .$severe_hb, '%'))
+```
+
+
+
+```{r}
+names = c('No (owner)', 'Moderate (owner)', 'Severe (owner)',
+          'No (renter)', 'Moderate (renter)', 'Severe (renter)')
+data = c(owner_n, owner_m, owner_s,
+         renter_n, renter_m, renter_s)
+piepercent = round(c(owner_n/owner, owner_m/owner, owner_s/owner,
+               renter_n/renter, renter_m/renter, renter_s/renter)*100, 1)
+
+colors = c("#D5FFFF", "#AAFFFF", "#80FFFF", "#FFD5FF", "#FFAAFF", "#FF80FF")
+# "#80FFFF" "#AAFFFF" "#D5FFFF" "#FFD5FF" "#FFAAFF" "#FF80FF"
+pie3D(data, labels = piepercent,explode = 0.1, main = "The Housing Burden % of Owner(3076) or Renter(4648), EPA",col = colors)
+
+legend( .4, 1.2,names, cex = 0.6, fill = colors)
+```
+
+### OPA test area
+From the housing burden analysis above, the City of Palo Alto needs to do something like OPA, to reduce the housing burden of households, especially the renterd-occupied households. If there is too much resistance to the implementation of this policy in the whole city, we can carry out it in 'test area'. The 'test area' should be someplace where housing burden is greatest. ACS 2019 5-yr data (census tracts) is used to in the analysis. The following two figures show the percentage of severe housing burden household for owner-occupied and renter-occupied housing units of four census tracts in EPA. The census tracts which cover EPA are distinct from the real EPA area. So, it is only a rough analysis. 
+
+From the first figure below, about 24% (EPA mean: 22%) of owner-occupied households are experiencing severe housing burden in tract 06120. From the second figure below, about 39% (EPA mean: 29%) of renter-occupied households are experiencing severe housing burden in tract 06120. So, tract 06120 with highest housing burden in EPA can be test area of OPA.
+
+```{r}
+epa <- places("CA", cb = T, progress_bar = FALSE) %>% 
+  filter(NAME=='East Palo Alto')
+
+smc_tracts <- tracts("CA", "San Mateo", cb = T, progress_bar = F)
+
+epa_tracts <-
+  smc_tracts %>% 
+  st_centroid() %>% 
+  .[epa, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(smc_tracts %>% select(GEOID)) %>% 
+  st_as_sf()
+```
+
+
+```{r}
+# EPA housing burden, Owner, by tract
+
+epa_owner <-  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "tract:*", 
+    regionin = "state:06+county:081",
+    vars = c(
+      "group(B25095)" # 	HOUSEHOLD INCOME BY SELECTED MONTHLY OWNER COSTS AS A PERCENTAGE OF HOUSEHOLD INCOME IN THE PAST 12 MONTHS
+    )
+  ) %>% 
+  filter(tract %in% epa_tracts$TRACTCE) %>% 
+  select(!c(GEO_ID,state,county,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+   separate(
+    label,
+    into = c(NA,NA,"income","perc"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(perc)) %>% 
+  group_by(tract, perc) %>% 
+  summarize(
+    estimate = sum(estimate, na.rm = T)
+  ) %>% 
+  mutate(
+    moderate_hb = 
+      ifelse(
+        perc %in% c("30.0 to 34.9 percent", 
+                    "35.0 to 39.9 percent",
+                    "40.0 to 49.9 percent"),
+        estimate,
+        0
+      ),
+    severe_hb = 
+      ifelse(
+        perc == "50.0 percent or more",
+        estimate,
+        0
+      )
+  ) %>% 
+  group_by(tract) %>% 
+  summarize(
+    total = sum(estimate, na.rm = T),
+    moderate_hb = sum(moderate_hb, na.rm = T) / total * 100,
+    severe_hb = sum(severe_hb, na.rm = T) / total * 100
+  ) %>% 
+  mutate(
+    mhb_rank = rank(-moderate_hb) / length(moderate_hb) *100,
+    shb_rank = rank(-severe_hb) / length(severe_hb) *100,
+    TRACTCE = tract
+  ) %>%
+  left_join(epa_tracts %>% select(TRACTCE, NAME)) %>% 
+  st_as_sf()
+
+pal <- colorNumeric(
+  palette = "Purples",
+  domain = 
+    epa_owner$severe_hb
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = epa_owner,
+    fillColor = ~pal(severe_hb),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1,
+    label = ~paste0(round(severe_hb,2)
+      , 
+      "% in ",
+      NAME
+      
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addPolygons(
+    data = smc_owner %>% filter(NAME == 'East Palo Alto'),
+    fill = F,
+    weight = 4,
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addLegend(
+    data = epa_owner,
+    pal = pal,
+    values = ~severe_hb,
+    title = "The % of severe housing burdened <br> households (owner, East Palo Alto)"
+  )
+
+```
+
+```{r}
+# EPA housing burden, Renter, by tract
+epa_renter <-  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "tract:*", 
+    regionin = "state:06+county:081",
+    vars = c(
+      "group(B25074)" # 	HOUSEHOLD INCOME BY GROSS RENT AS A PERCENTAGE OF HOUSEHOLD INCOME IN THE PAST 12 MONTHS
+    )
+  ) %>% 
+  filter(tract %in% epa_tracts$TRACTCE) %>% 
+  select(!c(GEO_ID,state,county,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+   separate(
+    label,
+    into = c(NA,NA,"income","perc"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(perc)) %>% 
+  group_by(tract, perc) %>% 
+  summarize(
+    estimate = sum(estimate, na.rm = T)
+  ) %>% 
+  mutate(
+    moderate_hb = 
+      ifelse(
+        perc %in% c("30.0 to 34.9 percent", 
+                    "35.0 to 39.9 percent",
+                    "40.0 to 49.9 percent"),
+        estimate,
+        0
+      ),
+    severe_hb = 
+      ifelse(
+        perc == "50.0 percent or more",
+        estimate,
+        0
+      )
+  ) %>% 
+  group_by(tract) %>% 
+  summarize(
+    total = sum(estimate, na.rm = T),
+    moderate_hb = sum(moderate_hb, na.rm = T) / total * 100,
+    severe_hb = sum(severe_hb, na.rm = T) / total * 100
+  ) %>% 
+  mutate(
+    mhb_rank = rank(-moderate_hb) / length(moderate_hb) *100,
+    shb_rank = rank(-severe_hb) / length(severe_hb) *100,
+    TRACTCE = tract
+  ) %>%
+  left_join(epa_tracts %>% select(TRACTCE, NAME)) %>% 
+  st_as_sf()
+
+pal <- colorNumeric(
+  palette = "Purples",
+  domain = 
+    epa_renter$severe_hb
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = epa_renter,
+    fillColor = ~pal(severe_hb),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1,
+    label = ~paste0(round(severe_hb,2), 
+      "% in ",NAME),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addPolygons(
+    data = smc_renter %>% filter(NAME == 'East Palo Alto'),
+    fill = F,
+    weight = 4,
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addLegend(
+    data = epa_renter,
+    pal = pal,
+    values = ~severe_hb,
+    title = "The % of severe housing burdened <br> households (renter, East Palo Alto)"
+  )
+```
+
+## Parcel Data Analysis (single-family dwelling)
+
+As mentioned before, whether the single-family dwellings should be included in the policy caused a lot arguments. In the section, parcel data analysis is conducted with only singe-family dwelling to clarify the problem. 
+
+Typically, a residential property would have an Exemption of \$0, \$5600, or \$7000. \$5600 and \$7000 are near-certain indications that a property is owner-occupied. \$0 suggests that a property is renter-occupied. An owner may simply forget to apply for the exemption, and also, not all \$0 exemption properties are necessarily residential. Here, \$0 exemption properties are assumed to be renter-occupied. Besides, Only 1% of the exemption records in the EPA assessor data are more than $7,000. It is hard to tell whether these records are owner-occupied or renter-occupied. In the following analysis, these ambiguous records are filtered out. 
+
+The following figure shows the distribution of owner-occupied (44%) and renter-occupied (56%) households in EPA (only single-family) in 2018-2019. The distribution is basically uniform. 
+```{r}
+
+
+# epa_zoning <- esri2sf("https://services8.arcgis.com/0IC8hha3hgQkmGoa/arcgis/rest/services/EastPaloAltoZoning_2021_WFL1/FeatureServer/1")
+
+# smc_exemption <- read_csv("https://datahub.smcgov.org/api/views/pmvw-bs84/rows.csv?accessType=DOWNLOAD")
+
+# saveRDS(epa_zoning, 'epa_zoning.rds')
+# saveRDS(smc_exemption, 'smc_exemption.rds')
+# write.csv(smc_exemption, 'smc_exemption.csv')
+
+epa_zoning <- read_rds('epa_zoning.rds')
+smc_exemption <- read_rds('smc_exemption.rds')
+```
+
+```{r}
+epa_exemption <- smc_exemption %>% 
+  mutate(
+    APN = `Parcel Number` %>% 
+      str_replace_all("-","")
+  ) %>% 
+  filter(APN %in% epa_zoning$APN) %>% 
+  left_join(epa_zoning) %>% 
+  st_as_sf() %>% 
+  filter(New_Zone == "R-LD") %>% 
+  filter(Exemption<=7000)
+
+renter_perc = nrow(epa_exemption %>% 
+                     filter(`Fiscal Year` == "2018/2019") %>%
+                     filter(Exemption == 0)) / nrow(epa_exemption %>% 
+                                                      filter(`Fiscal Year` == "2018/2019")) * 100
+
+# nrow(epa_exemption %>%
+#   filter(Exemption>7000))  / nrow(epa_exemption)
+# 0.009570411
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = epa_exemption %>% 
+      filter(`Fiscal Year` == "2018/2019"),
+    fillColor = "yellow",
+    color = "black",
+    label = "renter-occupied",
+    weight = 0.5
+  ) %>% 
+  addPolygons(
+    data = epa_exemption %>% 
+      filter(`Fiscal Year` == "2018/2019") %>% 
+      filter(Exemption %in% c(5600,7000)),
+    fillColor = "blue",
+    color = "black",
+    label = 'owner-occupied',
+    weight = 0.5,
+    fillOpacity = 1
+  ) %>% 
+   addLegend(
+    data = epa_exemption,
+    colors = c('blue', 'yellow'),
+    labels = c("owner-occupied (44%)", "renter-occupied (56%)"),
+    title = "Low Density Residential<br>by Tenure of EPA <br> in 2018~2019 "
+  )
+
+owner_perc = 100 - renter_perc
+
+# renter_perc
+# owner_perc
+```
+The following chart shows the change of the percentage of owner-occupied households and the net house value from 2015 to 2019. From the chart, the house values are rising year by year and the percentage of owner-occupied households are decreasing year by year. 
+
+```{r}
+## The change of % of owner from 2015 to 2018
+years <- c("2015/2016", "2016/2017", "2017/2018", "2018/2019")
+change <- data.frame(matrix(ncol=3,nrow=0, dimnames=list(NULL, c("year", "owner_perc","value"))))
+
+
+for (year in years){
+  exemption_year <- epa_exemption %>%
+    filter(`Fiscal Year` == year)
+  renter_perc = nrow(exemption_year %>% filter(Exemption == 0)) / nrow(exemption_year) * 100
+  owner_perc = 100 - renter_perc
+  value = mean(exemption_year$`Net Value`)
+  change[nrow(change) + 1,] = list(year, owner_perc, value)
+}
+
+# Value used to transform the data
+coeff <- max(change$value) / max(change$owner_perc)
+
+ggplot(change, aes(x=year,group = 1)) +
+  
+  geom_line( aes(y=change$owner_perc),linetype="dotted", color="blue", size=1) + 
+  geom_point(aes(y=change$owner_perc), color="blue", size=3) + 
+  geom_line( aes(y=change$value / coeff), color="red", size=1) + 
+  geom_point(aes(y=change$value / coeff), color="red", size=3) + 
+  
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Owner Percentage (%)",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="property value")
+  ) + 
+  
+  theme_ipsum() +
+
+  theme(
+    axis.title.y = element_text(color = "blue", size=13),
+    axis.title.y.right = element_text(color = "red", size=13)
+  ) +
+
+  ggtitle("Changes of tenure and property value (2015-2018, EPA)") +
+  theme(plot.title = element_text(size = 15, face = "bold"))
+```
+
+### The change of % of owner-occupied households.
+
+The following two figure shows the distribution of renter-occupied households change to owner-occupied households from 2015 to 2018, and owner-occupied households change to renter-occupied households from 2015 to 2018. The distributions are basically uniform too. But there are more "owner to renter" than "renter to owner" during the 4 years, which is shown more clearly in the following table. 
+```{r}
+### Tenure change
+# renter to owner
+epa_exemption_16 <- epa_exemption %>% 
+  filter(`Fiscal Year` == "2015/2016") %>% 
+  select(`Fiscal Year`, APN, Exemption, `Net Value`) %>% 
+  transmute(
+    `Fiscal Year` = `Fiscal Year`,
+    APN = APN,
+    `Net Value 16` = `Net Value`,
+    is_renter_16 = 
+      ifelse(
+        Exemption == 0,
+        1,
+        0
+      )
+  )
+
+epa_exemption_18 <- epa_exemption %>% 
+  filter(`Fiscal Year` == "2018/2019") %>% 
+  transmute(
+    APN = APN,
+    `Net Value 18` = `Net Value`,
+    is_renter_18 = 
+      ifelse(
+        Exemption == 0,
+        1,
+        0
+      )
+  )
+
+epa_delta <- epa_exemption_16 %>% 
+  left_join(epa_exemption_18 %>%st_drop_geometry(), by = 'APN')
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = epa_delta %>% 
+      filter(is_renter_16 == 1),
+    fillColor = "yellow",
+    color = "black",
+    label = "renter-occupied in 2015",
+    weight = 0.5
+  ) %>% 
+  addPolygons(
+    data = epa_delta %>% 
+      filter(is_renter_16 == 1) %>% 
+      filter(is_renter_18 == 0),
+    fillColor = "blue",
+    color = "black",
+    label = 'owner-occupied in 2018 (which is owner-occupied in 2015) ',
+    weight = 0.5,
+    fillOpacity = .5
+  ) %>% 
+   addLegend(
+    data = epa_exemption,
+    colors = c('blue', 'yellow'),
+    labels = c("renter-occupied in 2015", "owner-occupied in 2018 <br>(which is renter-occupied in 2015)"),
+    title = "Renter-occupied to owner-occupied <br> households in EPA <br> from 2015 to 2018"
+  )
+```
+
+```{r}
+# owner to renter
+epa_exemption_16 <- epa_exemption %>% 
+  filter(`Fiscal Year` == "2015/2016") %>% 
+  select(`Fiscal Year`, APN, Exemption, `Net Value`) %>% 
+  transmute(
+    `Fiscal Year` = `Fiscal Year`,
+    APN = APN,
+    `Net Value 16` = `Net Value`,
+    is_owner_16 = 
+      ifelse(
+        Exemption %in% c(5600, 7000),
+        1,
+        0
+      )
+  )
+
+epa_exemption_18 <- epa_exemption %>% 
+  filter(`Fiscal Year` == "2018/2019") %>% 
+  transmute(
+    APN = APN,
+    `Net Value 18` = `Net Value`,
+    is_owner_18 = 
+      ifelse(
+        Exemption %in% c(5600, 7000),
+        1,
+        0
+      )
+  )
+
+epa_delta <- epa_exemption_16 %>% 
+  filter(!is.na(is_owner_16)) %>% 
+  left_join(epa_exemption_18 %>%st_drop_geometry(), by = 'APN') %>% 
+  filter(!is.na(is_owner_18)) %>% 
+  mutate(
+    value_delta_perc = (`Net Value 18` - `Net Value 16`) / `Net Value 16` *100
+  )
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = epa_delta %>% 
+      filter(is_owner_16 == 1),
+    fillColor = "yellow",
+    color = "black",
+    label = "owner-occupied in 2015",
+    weight = 0.5
+  ) %>% 
+  addPolygons(
+    data = epa_delta %>% 
+      filter(is_owner_16 == 1) %>% 
+      filter(is_owner_18 == 0),
+    fillColor = "blue",
+    color = "black",
+    label = 'renter-occupied in 2018 (which is owner-occupied in 2015) ',
+    weight = 0.5,
+    fillOpacity = .5
+  ) %>% 
+   addLegend(
+    data = epa_exemption,
+    colors = c('blue', 'yellow'),
+    labels = c("owner-occupied in 2015", "renter-occupied in 2018 <br>(which is owner-occupied in 2015)"),
+    title = "Owner-occupied to Renter-occupied <br> households in EPA <br> from 2015 to 2018"
+  )
+```
+
+```{r}
+total = nrow(epa_delta)
+owner_to_owner = nrow(epa_delta %>% filter(is_owner_16 == 1 & is_owner_18 == 1))
+owner_to_renter = nrow(epa_delta %>% filter(is_owner_16 == 1 & is_owner_18 == 0))
+renter_to_owner = nrow(epa_delta %>% filter(is_owner_16 == 0 & is_owner_18 == 1))
+renter_to_renter = nrow(epa_delta %>% filter(is_owner_16 == 0 & is_owner_18 == 0))
+
+# print(owner_to_owner+owner_to_renter+renter_to_owner+renter_to_renter)
+df <- data.frame(owner_2018 = c(owner_to_owner, renter_to_owner, 
+                                owner_to_owner+ renter_to_owner),
+                 renter_2018 = c(owner_to_renter, renter_to_renter, 
+                                 owner_to_renter+renter_to_renter),
+                 total_2015 = c(owner_to_owner+owner_to_renter, 
+                                renter_to_owner + renter_to_renter,
+                                total)
+                 )
+
+rownames(df) <- c("owner_2015", "renter_2015", "total_2018")
+df
+```
+### The change of house value
+
+The following figure shows the change of single-family house value from 2015 to 2018. 97% of house values increased and nearly 20% of house values increased by 10%.  
+
+```{r}
+epa_delta <- epa_delta %>% 
+  filter(!is.na(value_delta_perc))
+value_increase_count <- nrow(epa_delta %>%
+                               filter(value_delta_perc > 0))
+# value_increase_count / total
+
+value_increase_count1 <- nrow(epa_delta %>%
+                               filter(value_delta_perc > 10))
+# value_increase_count1 / total
+```
+
+```{r}
+# value increase
+epa_delta <- epa_delta %>% 
+  filter(value_delta_perc <100) 
+
+pal <- colorNumeric(
+  palette = "Purples",
+  domain = 
+    epa_delta$value_delta_perc
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = epa_delta,
+    fillColor = ~pal(value_delta_perc),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1,
+    label = ~paste0(round(value_delta_perc,2)
+      , 
+      "% in ",
+      APN
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = epa_delta,
+    pal = pal,
+    values = ~value_delta_perc,
+    title = "House value change"
+  )
+```
+
+From the analysis in the section, rising house values and fewer homeowners tell that single-family dwellings should be included in a new policy, such as OPA. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
